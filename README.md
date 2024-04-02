@@ -7,6 +7,8 @@ Final code will eventually be hosted in the Cognitive Circuits github repository
 
 We inherit representations of Mazes from Peter Doohan's previous work, importing these to the RatInABox environment for simulating a mouse in a maze.
 
+Note, however, that we may use RatInABox as a common framework mainly for consistent trajectory generation across models.
+
 Here we explore the representation of space in grid-like codes, with the aim of investigating representations in a maze which is designed to de-correlate euclidean and maze path distances. 
 
 We include jupyter notebooks for each representation as a demo before writing a final main script which allows us to generate a given representation for a given grid cell
