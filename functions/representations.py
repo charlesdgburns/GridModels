@@ -5,7 +5,7 @@ This module contains classes to build two networkx representations of a maze: si
 import json
 import numpy as np
 import networkx as nx
-import functions.json_maker as info #Must be available in directory
+import get_experiment_info_json as info #Must be available in directory
 
 # %% Define global varaibles from experiment_info.json
 exp_info = info.get_exp_info()

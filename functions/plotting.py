@@ -12,8 +12,8 @@ import matplotlib.patches as patches
 import matplotlib.transforms as transforms
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-import functions.representations as mr
-import functions.json_maker as info
+import representations as mr
+import get_experiment_info_json as info
 
 # %% Set gobal variables
 #mpl.rcParams["font.family"] = "Arial"
