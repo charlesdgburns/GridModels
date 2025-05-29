@@ -44,11 +44,13 @@ def get_SR_from_bin_mask(bin_mask, discount_factor = 0.85):
     SR_matrix = mp.np.linalg.inv(temp_matrix) #Final output!
     return SR_matrix, graph
 
-def get_SR_components(SR_matrix, n_PCs):
+def get_SR_PCA_df(SR_df, n_PCs):
     pca_SR = PCA(n_components = n_PCs)
-    SR_components = pca_SR.fit_transform(SR_matrix) #Perform PCA on SR matrix
-    varExp = mp.np.ceil(pca_SR.explained_variance_ratio_*1000)/10 #Extracting variance explained as a percentage
-    return SR_components, varExp
+    SR_components = pca_SR.fit_transform(SR_df) #Perform PCA on SR matrix
+    varExp = mp.np.ceil(pca_SR.explained_variance_ratio_*10000)/100 #Extracting variance explained as a percentage
+    SR_PCA_df = pd.DataFrame(data = SR_components, 
+                             index = SR_df.index)
+    return SR_PCA_df, varExp
 
 def plot_binned_SRs(SR_components,varExp,bin_mask, n_plots = 'all'):
     plt.figure(figsize=(10, 10), dpi=300)
@@ -111,6 +113,51 @@ def get_maze_SR_df(maze, discount_factor=0.95):
     
     return SR_df
 
+def plot_maze_SR_components(SR_components,varExp,maze_name, n_plots = 'all'):
+    
+    maze = mr.get_simple_maze(maze_name)
+
+    maze_fine = mr.get_extended_simple_maze(maze) #we need the finer-scale for plotting heatmaps in either case.
+    label = nx.get_node_attributes(maze_fine, 'label').values()
+    
+    if SR_components.shape[1]==len(label):
+        maze = maze_fine
+    
+    plt.figure(figsize=(10, 10), dpi=300)
+    
+    if n_plots == 'all': #sets n_plots to all columns unless specified.
+        n_plots = SR_components.shape[1]
+
+    for each_set in range(n_plots//25): #For each set of 25 columns of the SR_matrix / place cell we want to plot.
+        SR_fig, axs = plt.subplots()
+        axs.axis('off')
+        axs.set_title('Principal Components of random walk SR', pad = 20)
+        for plot in range(25): #plot each in a 5x5 panel:
+            plot_position = plot+1 #must be integer between 1 and 25.
+            ax = SR_fig.add_subplot(5,5,plot_position)
+            ax.set_aspect('equal')
+            ax.axis('off')
+            
+            PCA_no = 25*each_set+plot+1
+            value = SR_components[:,PCA_no-1] #Extract the column which we want to plot, this is PCA number -1 because indexing starts at 0.
+             #if we're on the small maze, we want the colour value of edges to map to 0.
+            if SR_components.shape[1]<len(label):
+                value = mp.np.pad(value, (0, maze.number_of_edges()), 'constant') #SR matrix only has values for each node, so now we put a 0 for each edge.
+            values = mp.pd.Series(data=value, index=label)
+            values.index.name='maze_position' #required for the plot function to work
+
+            mp.plot_simple_heatmap(mr.get_simple_maze(maze_name), #We need to map onto the 'small' maze.
+                                values,
+                                ax,
+                                node_size = 10, #these dimensions work with a panel of 25
+                                edge_size = 2, #dimension works with a panel of 25
+                                value_label='',
+                                title='')
+            
+            subplot_title ='PC'+str(PCA_no)+': '+str(varExp[PCA_no-1])+'%'
+            ax.set_title(label=str(subplot_title), fontdict={'fontsize': 8}, pad=-2)
+    return None
+
 def plot_SR_fields_undirected(maze_name, SR_df,n_plots = 'all'):
     ''' This plots SR place fields onto 'simple maze's in 5x5 panels
         until all columns of the SR matrix are plotted
@@ -129,7 +176,7 @@ def plot_SR_fields_undirected(maze_name, SR_df,n_plots = 'all'):
     # Here we plot the columns in sets of 25
 
     if n_plots == 'all': #sets n_plots to all columns unless specified.
-        n_plots = len(SR_df.columns)
+        n_plots = SR_df.shape[1]
 
     for each_set in range(int(np.ceil(n_plots/25))): #For each set of 25 columns of the SR_matrix / place cell we want to plot.
         fig, axs = mp.plt.subplots() #Make a big figure for each set of 25 plots
