@@ -2,7 +2,7 @@
 
 Some code here is stolen from Tom George's RatInABox library.
 '''
-
+import torch # for very very fast generation of ratemaps
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -146,89 +146,91 @@ def get_grid_cell_module_from_bin_size(n_neurons, spacing, orientation, map_size
     
     return firingrate
 
+def get_fast_hexagonal_rates(positions, scales, orientations, offsets, device = 'cuda'):
+  '''PyTorch implementation of idealised hexagonal grid cell firing model.
+      Generates predicted firing rates for positions for each unique combination of scale, orientation, and offset.
+      Normalised such that peak_rate is equal to 1.
+      No for-loops for full parralelisation, but RAM-hungry.
 
-def get_grid_cell_modules(scales, orientations, offsets, map_size):
-    '''Generate grid cell firing rate maps for combinations of parameters.
-    
-    Parameters:
-    ----------
-    scales : array-like
-        Array of grid spacings to use
-    orientations : array-like
-        Array of orientations (in radians)
-    offsets : array-like, shape (N, 2)
-        Array of phase offsets, each row is [x, y]
-    map_size : int
-        Size of the square environment
-        
-    Returns:
-    --------
-    firingrates : ndarray
-        Shape (n_scales * n_orientations * n_offsets, map_size^2)
-        Each row is a flattened ratemap for a parameter combination
-    params : dict
-        Dictionary containing the parameter values used for each ratemap
-    '''
-    width_ratio = 4 / (3 * np.sqrt(3))
-    
-    # Get all combinations of parameters
-    n_scales = len(scales)
-    n_orientations = len(orientations)
-    n_offsets = len(offsets)
-    n_maps = n_scales * n_orientations * n_offsets
-    
-    # Store parameters for each ratemap
-    params = {
-        'scale': np.repeat(scales, n_orientations * n_offsets),
-        'orientation': np.tile(np.repeat(orientations, n_offsets), n_scales),
-        'offset_x': np.tile(offsets[:, 0], n_scales * n_orientations),
-        'offset_y': np.tile(offsets[:, 1], n_scales * n_orientations)
-    }
-    
-    # Initialize arrays
-    pos = get_flattened_coords(map_size)
-    w = np.zeros((n_maps, 3, 2))
-    
-    # Calculate basis vectors for all maps at once
-    for i in range(n_maps):
-        w1 = np.array([1.0, 0.0])
-        w1 = rotate(w1, np.pi/6 + params['orientation'][i])
-        w2 = rotate(w1, np.pi/3)
-        w3 = rotate(w1, 2*np.pi/3)
-        w[i] = np.stack([w1, w2, w3])
-    
-    # Calculate origins and vectors
-    origins = params['scale'].reshape(-1, 1) * np.stack([params['offset_x'], params['offset_y']], axis=1) / (2 * np.pi)
-    vecs = get_vectors_between(origins, pos)
-    
-    # Tile parameters for efficient calculation
-    w1 = np.tile(np.expand_dims(w[:, 0, :], axis=1), reps=(1, pos.shape[0], 1))
-    w2 = np.tile(np.expand_dims(w[:, 1, :], axis=1), reps=(1, pos.shape[0], 1))
-    w3 = np.tile(np.expand_dims(w[:, 2, :], axis=1), reps=(1, pos.shape[0], 1))
-    
-    # Adjust scales and tile
-    adjusted_scales = params['scale']/(2/np.sqrt(3))
-    tiled_scales = np.tile(np.expand_dims(adjusted_scales, axis=1), reps=(1, pos.shape[0]))
-    
-    # Calculate phases
-    phi_1 = ((2 * np.pi) / tiled_scales) * (vecs * w1).sum(axis=-1)
-    phi_2 = ((2 * np.pi) / tiled_scales) * (vecs * w2).sum(axis=-1)
-    phi_3 = ((2 * np.pi) / tiled_scales) * (vecs * w3).sum(axis=-1)
-    
-    # Calculate firing rates
-    firingrates = (1/3) * (np.cos(phi_1) + np.cos(phi_2) + np.cos(phi_3))
-    
-    # Rectify firing rates
-    a = np.array([1,0])@np.array([1,0])
-    b = np.array([np.cos(np.pi/3),np.sin(np.pi/3)])@np.array([1,0])
-    c = np.array([np.cos(np.pi/3),-np.sin(np.pi/3)])@np.array([1,0])
-    
-    firing_rate_at_full_width = (1/3) * (2*np.cos(np.sqrt(3)*np.pi*width_ratio/2) + 1)
-    firingrates -= firing_rate_at_full_width
-    firingrates /= (1 - firing_rate_at_full_width)
-    firingrates[firingrates < 0] = 0
-    
-    return firingrates, params
+  Parameters:
+  ----------
+  positions: numpy array #(n_pos,2)
+    x and y coordinates for which to simulate firing.
+  scales: numpy array #(n_scales)
+    scale in the same unit as positions, describing distance between neighbouring firing fields.
+  orientations: numpy array #(n_orientations)
+    global rotation angle of hexagonal pattern in radians
+  offsets: numpy array #(n_offsets,2)
+    x and y coordinates of offsets of hexagonal firing patterns in same unit as positions.
+  peak_rate: float
+    Peak firing rate in Hz, used to normalise firing rates for better fits to data.
+
+  Returns:
+  -------
+  firing_rates: torch.tensor() #(n_maps, n_pos)
+    the computed firing rates
+  params: dict
+    Dictionary containing the parameter values used for each ratemap
+
+  Notes:
+  -----
+  Inputs can be coordinates generated from pos = get_flattened_coords(map_size)'''
+
+  
+  # Get all combinations of parameters
+  n_scales = len(scales)
+  n_orientations = len(orientations)
+  n_offsets = len(offsets)
+  n_maps = n_scales * n_orientations * n_offsets
+
+  # Store parameters for each ratemap
+  params = {
+      'scales': np.repeat(scales, n_orientations),
+      'orientations': np.tile(orientations, n_scales),
+      'offsets' : offsets
+  }
+
+  params = {key:torch.tensor(value).to(dtype = torch.float32,
+                                        device=device) for key, value in params.items()}
+
+  # offset positions
+  offset_positions = positions.repeat(n_offsets,1) + params['offsets'].repeat_interleave(len(positions), dim=0)
+
+
+  thetas = params['orientations'].repeat(3,1).permute(1,0)+torch.tensor([0.0,torch.pi/3, 2*torch.pi/3]).to(device) 
+  #^ shape (n_orientations x n_scales,3)
+  periods = params['scales'].repeat(3,1).permute(1,0) #shape (n_scales x n_orientations,3)
+  periods = periods/(2/torch.sqrt(torch.tensor(3))) #correct for overlapping centres of cosine waves.
+
+
+  # Create projection matrix of shape (2, n_orientations x n_scales x 3)
+  projection_matrix = torch.stack([
+      torch.cos(thetas),
+      torch.sin(thetas)]).view(2,n_orientations*n_scales*3).to(dtype = torch.float32,
+                                              device= device)
+
+  # Perform matrix multiplication and scale by periods
+
+  # (n_pos x n_offsets, 2) @ (2,n_scales x n_orientations x 3) 
+  # -> (n_pos x n_offsets, n_scales x n_orientations x 3) 
+  # -> (n_pos, n_maps, 3)
+  projected_positions = (offset_positions @ projection_matrix).view(len(offset_positions),n_scales*n_orientations,3)
+  projected_positions = projected_positions * (2 * torch.pi / periods).unsqueeze(0)
+
+  sum_of_cosines = torch.sum(torch.cos(projected_positions),axis=2)
+  relu = torch.nn.ReLU()
+  firingrates = relu(sum_of_cosines/3) #shape is
+  firingrates = firingrates.reshape(n_offsets,1600,n_orientations*n_scales).permute(1,0,2).reshape(len(positions),n_maps).permute(1,0)
+
+  #adjust the width of the ratemap
+  width_ratio = 4 / (3 * np.sqrt(3))
+  firing_rate_at_full_width = (1/3) * (2*np.cos(np.sqrt(3)*np.pi*width_ratio/2) + 1)
+  firingrates -= firing_rate_at_full_width
+  firingrates /= (1 - firing_rate_at_full_width)
+  firingrates[firingrates < 0] = 0
+
+  return firingrates, params
+
 # %% utility functions
 def rotate(vector, theta):
     """Rotates a vector anticlockwise by angle theta."""
