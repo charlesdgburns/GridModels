@@ -147,89 +147,96 @@ def get_grid_cell_module_from_bin_size(n_neurons, spacing, orientation, map_size
     return firingrate
 
 def get_fast_hexagonal_rates(positions, scales, orientations, offsets, device = 'cuda'):
-  '''PyTorch implementation of idealised hexagonal grid cell firing model.
-      Generates predicted firing rates for positions for each unique combination of scale, orientation, and offset.
-      Normalised such that peak_rate is equal to 1.
-      No for-loops for full parralelisation, but RAM-hungry.
+    '''PyTorch implementation of idealised hexagonal grid cell firing model.
+        Generates predicted firing rates for positions for each unique combination of scale, orientation, and offset.
+        Normalised such that peak_rate is equal to 1.
+        No for-loops for full parralelisation, but RAM-hungry.
 
-  Parameters:
-  ----------
-  positions: numpy array #(n_pos,2)
+    Parameters:
+    ----------
+    positions: torch.tensor() #(n_pos,2)
     x and y coordinates for which to simulate firing.
-  scales: numpy array #(n_scales)
+    scales: numpy array #(n_scales)
     scale in the same unit as positions, describing distance between neighbouring firing fields.
-  orientations: numpy array #(n_orientations)
+    orientations: numpy array #(n_orientations)
     global rotation angle of hexagonal pattern in radians
-  offsets: numpy array #(n_offsets,2)
+    offsets: numpy array #(n_offsets,2)
     x and y coordinates of offsets of hexagonal firing patterns in same unit as positions.
-  peak_rate: float
+    peak_rate: float
     Peak firing rate in Hz, used to normalise firing rates for better fits to data.
 
-  Returns:
-  -------
-  firing_rates: torch.tensor() #(n_maps, n_pos)
-    the computed firing rates
-  params: dict
-    Dictionary containing the parameter values used for each ratemap
+    Returns:
+    -------
+    firing_rates: torch.tensor() #(n_maps, n_pos)
+        the computed firing rates
+    params: list of dicts
+        Dictionary containing the parameter names as keys and values as values.
 
-  Notes:
-  -----
-  Inputs can be coordinates generated from pos = get_flattened_coords(map_size)'''
-
-  
-  # Get all combinations of parameters
-  n_scales = len(scales)
-  n_orientations = len(orientations)
-  n_offsets = len(offsets)
-  n_maps = n_scales * n_orientations * n_offsets
-
-  # Store parameters for each ratemap
-  params = {
-      'scales': np.repeat(scales, n_orientations),
-      'orientations': np.tile(orientations, n_scales),
-      'offsets' : offsets
-  }
-
-  params = {key:torch.tensor(value).to(dtype = torch.float32,
-                                        device=device) for key, value in params.items()}
-
-  # offset positions
-  offset_positions = positions.repeat(n_offsets,1) + params['offsets'].repeat_interleave(len(positions), dim=0)
+    Notes:
+    -----
+    Inputs can be coordinates generated from pos = get_flattened_coords(map_size)'''
 
 
-  thetas = params['orientations'].repeat(3,1).permute(1,0)+torch.tensor([0.0,torch.pi/3, 2*torch.pi/3]).to(device) 
-  #^ shape (n_orientations x n_scales,3)
-  periods = params['scales'].repeat(3,1).permute(1,0) #shape (n_scales x n_orientations,3)
-  periods = periods/(2/torch.sqrt(torch.tensor(3))) #correct for overlapping centres of cosine waves.
+    # Get all combinations of parameters
+    n_positions = positions.shape[0]
+    n_scales = len(scales)
+    n_orientations = len(orientations)
+    n_offsets = len(offsets)
+    n_maps = n_scales * n_orientations * n_offsets
 
+    # start repeating and tiling parameters, and send them to GPU
+    repeated_scales = torch.tensor(np.repeat(scales, n_orientations)).to(dtype=torch.float32, device = device)
+    tiled_orientations = torch.tensor(np.tile(orientations, n_scales)).to(dtype=torch.float32, device = device)
+    offsets = torch.tensor(offsets).to(dtype=torch.float32, device = device)  
+    # offset positions
+    offset_positions = positions.repeat(n_offsets,1) + offsets.repeat_interleave(n_positions, dim=0)
+    ## Now define orientations and scales in terms of thetas and periods:
+    thetas = tiled_orientations.repeat(3,1).permute(1,0)+torch.tensor([0.0,torch.pi/3, 2*torch.pi/3]).to(device) 
+    #^ shape (n_orientations x n_scales,3)
+    periods = repeated_scales.repeat(3,1).permute(1,0) #shape (n_scales x n_orientations,3)
+    periods = periods/(2/torch.sqrt(torch.tensor(3))) #correct for distance at which centres of cosine waves overlap.
 
-  # Create projection matrix of shape (2, n_orientations x n_scales x 3)
-  projection_matrix = torch.stack([
-      torch.cos(thetas),
-      torch.sin(thetas)]).view(2,n_orientations*n_scales*3).to(dtype = torch.float32,
-                                              device= device)
+    # Create projection matrix of shape (2, n_orientations x n_scales x 3)
+    projection_matrix = torch.stack([
+        torch.cos(thetas),
+        torch.sin(thetas)]).view(2,n_orientations*n_scales*3).to(dtype = torch.float32,
+                                                device= device)
 
-  # Perform matrix multiplication and scale by periods
+    # Perform matrix multiplication and scale by periods
 
-  # (n_pos x n_offsets, 2) @ (2,n_scales x n_orientations x 3) 
-  # -> (n_pos x n_offsets, n_scales x n_orientations x 3) 
-  # -> (n_pos, n_maps, 3)
-  projected_positions = (offset_positions @ projection_matrix).view(len(offset_positions),n_scales*n_orientations,3)
-  projected_positions = projected_positions * (2 * torch.pi / periods).unsqueeze(0)
+    # (n_pos x n_offsets, 2) @ (2,n_scales x n_orientations x 3) 
+    # -> (n_pos x n_offsets, n_scales x n_orientations x 3) 
+    # -> (n_pos, n_maps, 3)
+    projected_positions = (offset_positions @ projection_matrix).view(len(offset_positions),n_scales*n_orientations,3)
+    projected_positions = projected_positions * (2 * torch.pi / periods).unsqueeze(0)
 
-  sum_of_cosines = torch.sum(torch.cos(projected_positions),axis=2)
-  relu = torch.nn.ReLU()
-  firingrates = relu(sum_of_cosines/3) #shape is
-  firingrates = firingrates.reshape(n_offsets,1600,n_orientations*n_scales).permute(1,0,2).reshape(len(positions),n_maps).permute(1,0)
+    sum_of_cosines = torch.sum(torch.cos(projected_positions),axis=2)  #shape is (n_positions*n_offsets, n_orientations*n_scales)
+    relu = torch.nn.ReLU()
+    firingrates = relu(sum_of_cosines/3) #is (n_positions*n_offsets, n_orientations*n_scales)
+    # permutations of ratemaps happening below:
+    # (n_offsets, n_positions, n_orientations*n_scales) 
+    #  -> (n_positions, n_offsets, n_orientations*n_scales)
+    #  -> (n_positions, n_offsets*n_orientations*n_scales)
+    #  -> (n_maps, n_positions) ## mainly so we can index out by firingrates[i,:] later
+    firingrates = firingrates.reshape(n_offsets,n_positions,n_orientations*n_scales).permute(1,0,2).reshape(len(positions),n_maps).permute(1,0)
 
-  #adjust the width of the ratemap
-  width_ratio = 4 / (3 * np.sqrt(3))
-  firing_rate_at_full_width = (1/3) * (2*np.cos(np.sqrt(3)*np.pi*width_ratio/2) + 1)
-  firingrates -= firing_rate_at_full_width
-  firingrates /= (1 - firing_rate_at_full_width)
-  firingrates[firingrates < 0] = 0
+    #adjust the width of the ratemap
+    width_ratio = 4 / (3 * np.sqrt(3))
+    firing_rate_at_full_width = (1/3) * (2*np.cos(np.sqrt(3)*np.pi*width_ratio/2) + 1)
+    firingrates -= firing_rate_at_full_width
+    firingrates /= (1 - firing_rate_at_full_width)
+    firingrates[firingrates < 0] = 0
 
-  return firingrates, params
+    # Finally, we want to find the combination of parameters used for each ratemap
+    tiled_scales = np.tile(repeated_scales.cpu().numpy(), n_offsets)
+    tiled_orientations = np.tile(orientations, n_scales*n_offsets)
+    tiled_offsets = np.repeat(offsets.cpu().numpy(), (n_scales*n_orientations), axis=0)
+    
+    params = [{'scale':tiled_scales[i],
+               'orientation':tiled_orientations[i],
+               'offset':tiled_offsets[i]} for i in range(n_maps)]
+    
+    return firingrates, params
 
 # %% utility functions
 def rotate(vector, theta):
