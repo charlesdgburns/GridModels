@@ -1,6 +1,8 @@
 ''' Minimal code library for a rectified cosine ('idealised grid cell') grid cell model.
 
 Some code here is stolen from Tom George's RatInABox library.
+
+by @charlesdgburns
 '''
 import torch # for very very fast generation of ratemaps
 import numpy as np
@@ -155,22 +157,20 @@ def get_fast_hexagonal_rates(positions, scales, orientations, offsets, device = 
     Parameters:
     ----------
     positions: torch.tensor() #(n_pos,2)
-    x and y coordinates for which to simulate firing.
+        x and y coordinates for which to simulate firing.
     scales: numpy array #(n_scales)
-    scale in the same unit as positions, describing distance between neighbouring firing fields.
+        scale in the same unit as positions, describing distance between neighbouring firing fields.
     orientations: numpy array #(n_orientations)
-    global rotation angle of hexagonal pattern in radians
+        global rotation angle of hexagonal pattern in radians
     offsets: numpy array #(n_offsets,2)
-    x and y coordinates of offsets of hexagonal firing patterns in same unit as positions.
-    peak_rate: float
-    Peak firing rate in Hz, used to normalise firing rates for better fits to data.
-
+        x and y coordinates of offsets of hexagonal firing patterns in same unit as positions.
+    
     Returns:
     -------
     firing_rates: torch.tensor() #(n_maps, n_pos)
         the computed firing rates
-    params: list of dicts
-        Dictionary containing the parameter names as keys and values as values.
+    params: list of dicts #(n_maps)
+        Dictionary containing the parameter names as keys and values as values for each firingrate map.
 
     Notes:
     -----
@@ -188,6 +188,7 @@ def get_fast_hexagonal_rates(positions, scales, orientations, offsets, device = 
     repeated_scales = torch.tensor(np.repeat(scales, n_orientations)).to(dtype=torch.float32, device = device)
     tiled_orientations = torch.tensor(np.tile(orientations, n_scales)).to(dtype=torch.float32, device = device)
     offsets = torch.tensor(offsets).to(dtype=torch.float32, device = device)  
+    positions = torch.tensor(positions).to(dtype=torch.float32, device = device)
     # offset positions
     offset_positions = positions.repeat(n_offsets,1) + offsets.repeat_interleave(n_positions, dim=0)
     ## Now define orientations and scales in terms of thetas and periods:
@@ -235,7 +236,10 @@ def get_fast_hexagonal_rates(positions, scales, orientations, offsets, device = 
     params = [{'scale':tiled_scales[i],
                'orientation':tiled_orientations[i],
                'offset':tiled_offsets[i]} for i in range(n_maps)]
-    
+    ## GPU RAM MANAGEMENT:
+    del repeated_scales, tiled_orientations, offsets, positions, projected_positions, projection_matrix
+    torch.cuda.empty_cache()  # Clear GPU memory
+    # Return firing rates and parameters
     return firingrates, params
 
 # %% utility functions

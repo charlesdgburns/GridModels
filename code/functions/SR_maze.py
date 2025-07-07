@@ -123,7 +123,7 @@ def plot_maze_SR_components(SR_components,varExp,maze_name, n_plots = 'all'):
     if SR_components.shape[1]==len(label):
         maze = maze_fine
     
-    plt.figure(figsize=(10, 10), dpi=300)
+    plt.figure(figsize=(20, 20), dpi=300)
     
     if n_plots == 'all': #sets n_plots to all columns unless specified.
         n_plots = SR_components.shape[1]
