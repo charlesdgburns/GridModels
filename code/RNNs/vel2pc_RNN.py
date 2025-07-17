@@ -37,21 +37,21 @@ options = Options()
 options.device = DEVICE
 options.save_dir = '../code/GridModels/data/sorscher_models/'
 
-options.n_steps = 100000      # number of steps in full trajectory
+options.n_steps = 200000     # number of steps in full trajectory
 options.batch_size = 200      # number of trajectories per batch
 options.sequence_length = 20  # number of steps in trajectory sub-sequence (for training)
 options.n_epochs = 100       # number of epochs during training
 options.train_ratio = 0.8    # proportion of data used for training (rest is validation)
 options.environment_scale = 1.5 # width and height (m) of square training environment
 options.framerate = 1/60      # data rate for both position and place cell firingrate
-options.learning_rate = 1e-4  # gradient descent learning rate
+options.learning_rate = 3e-4  # gradient descent learning rate
 options.Ng = 4096             # number of grid cells
 options.Np = 512              # number of place cells
-options.place_cell_rf = 0.15  # width of place cell center tuning curve (m)
+options.place_cell_rf = 0.10  # width of place cell center tuning curve (m)
 options.pc_type = "diff_of_gaussians" # 'diff of gaussians' or 'gaussian'
 options.RNN_type = 'RNN'      # RNN or LSTM
 options.activation = 'relu'   # recurrent nonlinearity
-options.weight_decay = 1e-6   # strength of weight decay on recurrent weights
+options.weight_decay = 1e-7   # strength of weight decay on recurrent weights
 #options.periodic = False      # trajectories with periodic boundary conditions
 #options.surround_scale = 2    # if DoG, ratio of sigma2^2 to sigma1^2 
 #^^ NB: ratinabox has this default ot 1.5
@@ -72,16 +72,12 @@ class vel2pc_RNN(torch.nn.Module):
                 input_size=self.input_size,
                 hidden_size=self.hidden_size,
                 num_layers=1,
-                batch_first=True  # (batch, seq, feature)
+                batch_first=True,  # (batch, seq, feature)
+                nonlinearity = options.activation
             )
         elif options.RNN_type == 'LSTM':
             self.rnn = torch.nn.LSTM(input_size = self.input_size,
                                      hidden_size = self.hidden_size)
-
-        if options.activation == 'relu':
-            self.activation = torch.nn.functional.relu
-        elif options.activation == 'tanh':
-            self.activation = torch.nn.functional.tanh
 
         # We need to both reset hidden state (PC->GC) and decode (GC -> PC)
         self.encoder = torch.nn.Linear(self.output_size, self.hidden_size)
@@ -102,7 +98,6 @@ class vel2pc_RNN(torch.nn.Module):
         else:
             h0 = hidden_state
         out, hidden = self.rnn(input, h0)
-        out = self.activation(out)
         out = self.decoder(out)
         return out, hidden
     
@@ -110,22 +105,20 @@ class vel2pc_RNN(torch.nn.Module):
         ''' '''
         # MSE loss for next step prediction
         mse_loss = torch.nn.MSELoss()(outputs, targets)
-        # L1 regularization term
-        weights = []
-        for param in self.parameters():
-            weights.append(param.view(-1))
-        weights = torch.cat(weights)
-        l1_reg = self.weight_decay * (self.rnn.weight_hh_l0**2).sum()
+        # weight decay regularization term
+        weight_loss = self.weight_decay * (self.rnn.weight_hh_l0**2).sum()
         # Total loss
-        total_loss = mse_loss + l1_reg
-        return total_loss, mse_loss, l1_reg
+        total_loss = mse_loss + weight_loss
+        return total_loss, mse_loss, weight_loss
 
 
 class vel2pc_dataset(torch.utils.data.Dataset):
     '''Creating a dataset that is friendly towards Torch dataloaders for fast training.
     Should be a list of tuples (input, target).
-    here input is (seq_length, 2); velocities at t_n
-         target is (seq_length, n_place_cells); firingrates at t_n+1
+    here 'input' is a tuple (veocity_input, init_firingrate) 
+        where velocity_input is #(seq_length, 2); velocities at t_n for each n in {1,...,seq_length}
+        init_firingrate is #(n_place_cells); the firingrates at t_0 (initial position)
+        target is #(seq_length, n_place_cells); firingrates at t_n+1 for each n in {1,...,seq_length}
 '''
     
     def __init__(self, options, navigation_rates_df = None):
@@ -174,10 +167,13 @@ def get_model_and_data(options):
 def generate_navigation_rates_df(options, true_trajectory = None):
     '''Using ratinabox to generate a dataframe with navigation information and place cell firing rates.'''
     # set up rat and box
+    np.random.seed(42) #reproducible place cell locations
     box = riab.Environment(params = {'scale':options.environment_scale})
     rat = riab.Agent(box, params={"dt":options.framerate})
     place_cells = PlaceCells(rat, params = {"n":options.Np,
-                                            "description":options.pc_type,})
+                                            "description":options.pc_type,
+                                            "widths":options.place_cell_rf})
+    np.random.seed() #completely random trajectories
     options.n_steps = options.n_steps if true_trajectory is None else len(true_trajectory)
     for i in tqdm(range(options.n_steps)):
         rat.update()
@@ -210,6 +206,7 @@ def generate_navigation_rates_df(options, true_trajectory = None):
 
 # model training, saving, and loading #
 def train_model(options, save = True):
+
     #set up our rnn
     model = vel2pc_RNN(options)
     
@@ -265,7 +262,7 @@ def train_model(options, save = True):
     if save:
         print('Saving model and data!')
         save_model_run(options, model, dataset, losses)
-        
+
     return model, dataset, losses
 
 def save_model_run(options, model, dataset, losses):
@@ -285,6 +282,9 @@ def save_model_run(options, model, dataset, losses):
     
     losses_dict = {f'{k}.{key}':v[key] for k, v in losses.items() for key in v.keys()}
     losses_df = pd.DataFrame(losses_dict)
+    #losses_df.columns = pd.MultiIndex.from_tuples(
+    #    [tuple(col.split('.')) if '.' in col else (col,"") for col in losses_df.columns ]
+    #)
     losses_df.to_csv(files_dir/'losses.htsv', sep = '\t', index=False)
     return 
 
@@ -300,12 +300,16 @@ def load_model(options):
     model = vel2pc_RNN(options)
     model.load_state_dict(torch.load(files_dir/f"vel2pc_{model_id}.pt", 
                                      weights_only=True))
-    losses = pd.read_csv(files_dir/'losses.htsv', sep = '\t')
-    losses.columns = pd.MultiIndex.from_tuples(
-        [tuple(col.split('.')) if '.' in col else (col,"") for col in losses.columns ]
-    )
     try:
-        dataset = torch.load(files_dir/f'dataset_{model_id}.pt')
+        losses = pd.read_csv(files_dir/'losses.htsv', sep = '\t')
+        losses.columns = pd.MultiIndex.from_tuples(
+            [tuple(col.split('.')) if '.' in col else (col,"") for col in losses.columns ]
+        )
+    except Exception as e:
+        print(f'Failed to load losses: {e}')
+        losses = None
+    try:
+        dataset = torch.load(files_dir/f'dataset_{model_id}.pt', weights_only=False)
     except Exception as e:
         print(f'failed to load dataset: {e}')
         dataset = None
