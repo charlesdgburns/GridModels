@@ -14,9 +14,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {DEVICE}")
 
 ## Local imports
-from GridMaze.analysis.cluster_tuning import spatial
-from GridMaze.analysis.core.folds import kfold_leave_one_out
-from experiment.code.GridModels.code.gridcell_models import hexagonal_gridcells as hex
+from GridModels.code.measures import spatial
+from GridModels.code.models import hexagonal_gridcells as hex
 
 # %% Global Variables
 #ratemap keyword arguments:
@@ -306,6 +305,34 @@ def kfold_leave_one_out(pos, spikes, k):
 
 
 # %% Utility functions
+
+
+def kfold_leave_one_out(pos, spikes, k):
+    """
+    Splits data into k contiguous chunks and yields (train_pos, train_spikes, test_pos, test_spikes) for each fold.
+    No shuffling; preserves order within chunk.
+
+    Args:
+        pos: np.ndarray of shape (N, 2)
+        spikes: np.ndarray of shape (N,)
+        k: int, number of folds
+
+    Yields:
+        train_pos, train_spikes, test_pos, test_spikes for each fold
+    """
+    n = len(spikes)
+    fold_sizes = [n // k + (1 if i < n % k else 0) for i in range(k)]
+    indices = np.arange(n)
+    current = 0
+    splits = []
+    for fold_size in fold_sizes:
+        splits.append(indices[current:current + fold_size])
+        current += fold_size
+
+    for i in range(k):
+        test_idx = splits[i]
+        train_idx = np.concatenate([splits[j] for j in range(k) if j != i])
+        yield pos[train_idx], spikes[train_idx], pos[test_idx], spikes[test_idx]
 
 
 def standardise_basis_vectors(basis_1,basis_2):

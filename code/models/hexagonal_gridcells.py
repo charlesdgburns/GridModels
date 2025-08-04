@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from GridMaze.maze import representations as mr
-from GridMaze.maze import plotting as mp
+from GridModels.code.maze import representations as mr
+from GridModels.code.maze import plotting as mp
 
 
 # %% Global variables
