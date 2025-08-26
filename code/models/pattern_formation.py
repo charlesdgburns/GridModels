@@ -84,6 +84,7 @@ def optimize_lagrangean(P, n_grid_cells, learning_rate=0.01, n_iterations=1000,
     
     return {'G': G, 'W': W, 'Lambda': Lambda}
 
+# constrained optimisation 
 
 
 ## Fast-fourier type solutions (code from Sorscher et al., 2023) ##
