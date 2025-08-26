@@ -1,8 +1,8 @@
 """ Following Sorscher et al. 2023,
-# here we want to generate hexagonal grid cells from path integration over place cell activations (velocity -> place cells; vel2pc)
-# we implement this with RatInABox
+here we want to generate hexagonal grid cells from path integration over place cell activations.
+we implement this with RatInABox
 
-## This notebook is quite long, containing all of the following:
+This notebook is quite long, containing all of the following:
 
 - 1. trajectory generation using ratinabox
 
@@ -10,8 +10,8 @@
 
 - 3. Training loop and saving 
 
-# NB: using Adam as a weight optimizer with ReLU activations induces sparsity on its own (https://arxiv.org/pdf/1812.08119)
-#     here we use AdamW which decouples weight decay and we also apply Amsgrad.
+NB: using Adam as a weight optimizer with ReLU activations induces sparsity on its own (https://arxiv.org/pdf/1812.08119)
+    here we use AdamW which decouples weight decay and we also apply Amsgrad.
 """
 ## setup ##
 
@@ -32,19 +32,19 @@ from GridModels.code.measures import position_decoders as decoding
 ## global variables ##
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {DEVICE}")
-
+TRAJECTORIES_DIR = Path('./GridModels/data/trajectories') #this is where generated and real trajectories are saved to and loaded from
 # copying over from Sorscher et al.'s repo:
 class Options:
     pass
 options = Options()
 
 options.device = DEVICE
-options.save_dir = '../code/GridModels/data/sorscher_models/'
+options.save_dir = Path('../code/GridModels/data/sorscher_models/')
 
-options.n_steps = 100000     # number of steps in full trajectory
+options.n_steps = 150000     # number of steps in full trajectory
 options.batch_size = 32      # number of trajectories per batch
 options.sequence_length = 20  # number of steps in trajectory sub-sequence (for training)
-options.n_epochs = 101       # number of epochs during training
+options.n_epochs = 100       # number of epochs during training
 options.train_ratio = 0.8    # proportion of data used for training (rest is validation)
 options.environment_scale = 1.5 # width and height (m) of square training environment
 options.framerate = 1/60      # data rate for both position and place cell firingrate
@@ -62,7 +62,7 @@ options.sparsity = 0.0        # strength of weight decay on recurrent weights
 #^^ NB: ratinabox has this default ot 1.5
 
 # define the model #
-
+## naming here is a bit silly, but the idea is we take velocy and predict place cells (velocity -> place cell; v2pc)
 class vel2pc_RNN(torch.nn.Module):
     def __init__(self, options):
         super(vel2pc_RNN, self).__init__()
@@ -99,8 +99,6 @@ class vel2pc_RNN(torch.nn.Module):
         # make sure the model and its parameters are on the specified device
         self.device = options.device
         self.to(self.device) 
-        
-        
 
     def forward(self, input, hidden_state = None):
         '''Takes velocity input as batch_first #(batch,seq,2)'''
@@ -163,7 +161,7 @@ class vel2pc_dataset(torch.utils.data.Dataset):
     
 ## functions ##
   
-#top level function (this is what you might use to instantiate a model)#
+#top level function (this is what you might use to instantiate a model#
 def get_model_and_data(options):
     
     if (Path(options.save_dir)/generate_model_id(str(options.__dict__))).exists():
@@ -176,7 +174,48 @@ def get_model_and_data(options):
   
   
 # data generation #
-def generate_navigation_rates_df(options, true_trajectory = None,
+
+def get_trajectory(riab_or_real:str  = 'riab',    
+                      environment:str = 'open_field', #or 'maze_1' or 'maze_2'
+                      train_or_test:str = 'train',
+                      save_dir:str = TRAJECTORIES_DIR
+                   ):
+    '''Helper function to load a saved trajectory (or generate one if not saved).
+    This only updates the steps (centroid_position, velocity, and head_direction)
+    but not place cell activations as these are appended separately as part of navigation_rates_df()).'''
+    filepath = TRAJECTORIES_DIR/f'{riab_or_real}.{environment}.{train_or_test}.htsv'
+    if filepath.exists():
+        print(f'Loading {filepath.stem}')
+        df = pd.read_csv(filepath, sep = '\t')
+        df.columns =  pd.MultiIndex.from_tuples(
+            [col.split('.') if '.' in col else (col,'') for col in df.columns])
+    elif riab_or_real=='riab' and environment=='open_field':
+        print(f'Trajectory not yet saved. Generating from scratch')
+        # set up rat and box
+        box = riab.Environment(params = {'scale':options.environment_scale})
+        rat = riab.Agent(box, params={"dt":options.framerate})
+        for i in tqdm(range(150000)): #150000 steps is roughly 30 minutes at 60fps, matched with real data.
+            rat.update()
+        nav_rates_dict = {}
+        nav_rates_dict['time'] = rat.history['t']
+        nav_rates_dict['centroid_position.x'] = [p[0] for p in rat.history['pos']]
+        nav_rates_dict['centroid_position.y'] = [p[1] for p in rat.history['pos']]
+        nav_rates_dict['velocity.x'] = [v[0] for v in rat.history['vel']]
+        nav_rates_dict['velocity.y'] = [v[1] for v in rat.history['vel']]
+        nav_rates_dict['head_direction.value'] = np.rad2deg([np.arctan2(v[1],v[0]) for v in rat.history['head_direction']])
+        nav_rates_dict['head_direction.x'] = [v[0] for v in rat.history['head_direction']]
+        nav_rates_dict['head_direction.y'] = [v[1] for v in rat.history['head_direction']]
+        df = pd.DataFrame(nav_rates_dict)
+        #SAVE OUT
+        df.to_csv(filepath, sep='\t',index = False)
+        df.columns =  pd.MultiIndex.from_tuples(
+        [col.split('.') if '.' in col else (col,'') for col in df.columns])
+    else:
+        print(f"oopsie, there's no such trajectory! is something wrong with the filepath? \n {filepath}")
+    return df
+
+
+def generate_navigation_rates_df(options, trajectory = None,
                                  successor_features=False):
     '''Using ratinabox to generate a dataframe with navigation information and place cell firing rates.'''
     # set up rat and box
@@ -187,14 +226,14 @@ def generate_navigation_rates_df(options, true_trajectory = None,
                                             "description":options.pc_type,
                                             "widths":options.place_cell_rf})
     np.random.seed() #completely random trajectories
-    options.n_steps = options.n_steps if true_trajectory is None else len(true_trajectory)
+    options.n_steps = options.n_steps if trajectory is None else len(trajectory)
     for i in tqdm(range(options.n_steps)):
         rat.update()
-        if true_trajectory is not None:
+        if trajectory is not None:
             # if we have a real trajectory, we use it to set the rat's position
-            rat.history['pos'][-1] = true_trajectory['centroid_position'].values[i]
-            rat.history['vel'][-1] = true_trajectory['velocity'].values[i]
-            rat.history['head_direction'][-1] = [true_trajectory['head_direction'].x.values[i], true_trajectory['head_direction'].y.values[i]]
+            rat.history['pos'][-1] = trajectory['centroid_position'].values[i]
+            rat.history['vel'][-1] = trajectory['velocity'].values[i]
+            rat.history['head_direction'][-1] = [trajectory['head_direction'].x.values[i], trajectory['head_direction'].y.values[i]]
         place_cells.update()
         
     # now save in a format easy to read and store, consistent with our real data.
@@ -204,9 +243,9 @@ def generate_navigation_rates_df(options, true_trajectory = None,
     nav_rates_dict['centroid_position.y'] = [p[1] for p in rat.history['pos']]
     nav_rates_dict['velocity.x'] = [v[0] for v in rat.history['vel']]
     nav_rates_dict['velocity.y'] = [v[1] for v in rat.history['vel']]
+    nav_rates_dict['head_direction.value'] = np.rad2deg([np.arctan2(v[1],v[0]) for v in rat.history['head_direction']])
     nav_rates_dict['head_direction.x'] = [v[0] for v in rat.history['head_direction']]
     nav_rates_dict['head_direction.y'] = [v[1] for v in rat.history['head_direction']]
-    nav_rates_dict['head_direction.degrees'] = np.rad2deg([np.arctan2(v[1],v[0]) for v in rat.history['head_direction']])
     for place_cell in range(options.Np):
         nav_rates_dict[f'firingrate.place_cell_{place_cell}'] = [x[place_cell] for x in place_cells.history['firingrate']]
     navigation_rates_df = pd.DataFrame(nav_rates_dict)
@@ -224,7 +263,14 @@ def train_model(options, save = True):
     model = vel2pc_RNN(options)
     
     print('Generating data!')
-    dataset = vel2pc_dataset(options)
+    if options.n_steps == 150000:
+        trajectory = get_trajectory(riab_or_real = 'riab',
+                                    environment='open_field', 
+                                    train_or_test = 'train')
+        nav_rates_df = generate_navigation_rates_df(options, trajectory)
+        dataset = vel2pc_dataset(options, nav_rates_df)
+    else:
+        print('n_steps =/= 150k, so generating brand new trajectory')
     train_size = int(options.train_ratio*len(dataset))
     val_size = len(dataset)-train_size
     train_data, validation_data = torch.utils.data.random_split(dataset,[train_size, val_size])
