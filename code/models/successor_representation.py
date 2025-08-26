@@ -19,21 +19,34 @@ from ..maze import representations as mr
 
 # %% SR on finely binned data
 
-def get_SR_from_bin_mask(bin_mask, discount_factor = 0.85):
+def get_SR_from_bin_mask(bin_mask, discount_factor = 0.85, allow_diagonal = True):
     '''Returns the SR matrix under a random walk with a given discount factor,
     using a mask of bins representing locations which are valid in the world.
     Bin mask must have TRUE/FALSE or 1/0 entries only.
     Assumes valid transitions to neighbouring bins and to itself.'''
-    #start with a 2d graph (lattice connected to neighbouring nodes)
+    # 2. build a nteworkx 2d graph (lattice connected to adjacent nodes)
     graph = nx.grid_2d_graph(bin_mask.shape[0], bin_mask.shape[1])
-    # Add self-loops (standing still) and remove edges based on the mask
+    # we then iterate over nodes and add/remove edges
+    nodes_to_remove = []
+    edges_to_add = []
     for node in graph.nodes():
-        if bin_mask[node]!=1:
-            for neighbor in list(graph.neighbors(node)):
-                graph.remove_edge(node, neighbor)
-            continue
-        else:
-            graph.add_edge(node, node) #add self-loop to every node
+        if bin_mask[node] != 1: #unvisited nodes get deleted (along with their edges).
+            nodes_to_remove.append(node)
+        else: #visited bins get edges added
+            # Add self-loop to every valid node
+            edges_to_add.append((node, node))
+            if allow_diagonal:
+                # Loop over diagonal neighbours and assign edge if valid position
+                for neighbour_transform in [(1,1), (-1,1), (1,-1), (-1,-1)]:
+                    diagonal_neighbour = tuple(map(sum, zip(node, neighbour_transform)))
+                    # Proper boundary checking for both dimensions
+                    if (0 <= diagonal_neighbour[0] < bin_mask.shape[0] and 
+                        0 <= diagonal_neighbour[1] < bin_mask.shape[1]):
+                        if bin_mask[diagonal_neighbour] == 1:
+                            edges_to_add.append((node, diagonal_neighbour))
+    graph.remove_nodes_from(nodes_to_remove)
+    graph.add_edges_from(edges_to_add)
+    
     # Calculate the transition matrix (T)
     adj_matrix = nx.adjacency_matrix(graph).toarray()
     T = np.zeros_like(adj_matrix, dtype=float)
