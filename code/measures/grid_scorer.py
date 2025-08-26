@@ -43,7 +43,7 @@ from GridModels.code.measures import spatial
 np.seterr(divide="ignore", invalid="ignore")  # there will be divide by zeros. Ignore these
 
 ## top level use-case function
-def get_grid_scores(ratemaps, binx, biny):
+def get_grid_scores(ratemaps, binx, biny, return_metrics = False):
     '''Computes a grid score for each ratemap.
     
     Vars:
@@ -54,17 +54,34 @@ def get_grid_scores(ratemaps, binx, biny):
         bin edges in metres
     biny: np.array #(n_bins_y+1)
         bin edges in metres
+    return_metrics: bool
+        option to return more than just gridscore 
     
-    Returns'''
-    grid_scores = []
-    sacs = []
+    Returns:
+    ----
+    gridscores: list()
+        gridscore for each unit in ratemaps
+        
+    OR gridcell_metrics: dict
+        dictionary containing gridscore, scale, orientation, and spatial autocorrelograms
+        '''
+    gridcell_metrics = {'gridscore':[],
+                    'scale':[],
+                    'orientation':[],
+                    'sacs':[]}
     for ratemap in tqdm(ratemaps):
         coords_range = [[min(binx),max(binx)],[min(biny),max(biny)]]
-        sacs.append(spatial.autoCorr2D(np.nan_to_num(ratemap.copy(), 0), np.isnan(ratemap.copy())) )
+        gridcell_metrics['sacs'].append(spatial.autoCorr2D(np.nan_to_num(ratemap.copy(), 0), np.isnan(ratemap.copy())) )
         mask_parameters = [(0.1,1)] #trying to exclude the centre as in Gardner et al.
         scorer = GridScorer(len(binx)-1, coords_range, mask_parameters)
-        grid_scores.append(scorer.get_grid_properties(ratemap)['gridscore_60'])
-    return grid_scores, sacs
+        grid_properties = scorer.get_grid_properties(ratemap)
+        gridcell_metrics['gridscore'].append(grid_properties['gridscore_60'])
+        gridcell_metrics['scale'].append(grid_properties['scale_60'])
+        gridcell_metrics['orientation'].append(grid_properties['orientation_60'])
+    if return_metrics:
+        return gridcell_metrics
+    else:
+        return gridcell_metrics['gridscore']
 ## Functions and grid scorer class 
 
 def circle_mask(size, radius, in_val=1.0, out_val=0.0):
