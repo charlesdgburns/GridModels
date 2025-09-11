@@ -1,5 +1,5 @@
 '''The following script is meant to replicate Sorscher et al.'s (2023) pattern formation results.
-
+This should be able to predict/replicate grid patterns learned in path-integrating RNNs, without training an RNN.
 Notation here is consistent with Sorscher et al.'s (2019) ICLR paper. '''
 
 import numpy as np
@@ -11,6 +11,11 @@ from scipy.linalg import svd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.linalg import svd
+
+## The pattern formation requires a representation of place cell activations
+# the matrix P, corresponding to firing rate at different locations.
+# We write some succinct code to generate these on binned space.
+
 
 
 def optimize_lagrangean(P, n_grid_cells, learning_rate=0.01, n_iterations=1000,  

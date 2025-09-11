@@ -316,7 +316,9 @@ class GridScorer(object):
         if min_distance < 0:
             print(inner_radius)
             print(len(sac))
-        peak_coords = skimage.feature.peak_local_max(np.nan_to_num(mask * sac, nan=-1), min_distance, threshold_rel=0.5)
+        peak_coords = skimage.feature.peak_local_max(np.nan_to_num(mask * sac, nan=-1), 
+                                                     min_distance,
+                                                     threshold_rel=0.5)
         centre = np.floor(np.array(np.shape(sac.copy())) / 2)
         centred_peak_coords = peak_coords - centre
 

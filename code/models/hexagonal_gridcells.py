@@ -19,7 +19,20 @@ from GridModels.code.maze import plotting as mp
 
 
 def get_grid_cell_module_on_maze(n_neurons, scale_in_metres, orientation, bin_mask, metres_per_bin):
-    '''For a mask indicating valid bins, returns a '''
+    '''For a mask indicating valid bins, returns a grid cell representation on the maze.
+    Parameters:
+    -----------
+    n_neurons: number of grid cells
+    scale_in_metres: grid module scale (distance between neighbouring peaks)
+    orientation: angle of grid cell pattern relative to due east.
+    bin_mask: (NxN) discretised matrix with TRUE/FALSE values for whether the bin is valid.
+    metres_per_bin: the size of each bin in metres.
+    
+    Returns:
+    --------
+    mean_df: pd.Dataframe() containing firing rate for each simple_maze location (e.g. A1, A1-A2, et.c.).
+    
+    '''
     firingrates = get_grid_cell_module_from_bin_size(n_neurons,
                                                      scale_in_metres*metres_per_bin,
                                                      orientation,

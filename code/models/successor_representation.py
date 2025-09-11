@@ -1,6 +1,10 @@
 '''The following script is meant to contain functions which quickly generate successor representations from mazes.
 Here we also include convenient plotting functions.
-See the 'Stachenfeld_representations.ipynb' notebook for more details.''' 
+See the 'Stachenfeld_representations.ipynb' notebook for more details.
+
+- First we test the stachenfeld representations on square bins (same code as ratemaps)
+- We want to compare euclidean, geodesic, and SR place fields.
+''' 
 
 ## SETUP ##
 import numpy as np
@@ -10,6 +14,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 from sklearn.decomposition import PCA
+from scipy.sparse.csgraph import shortest_path
 # local functions
 from ..maze import plotting as mp
 from ..maze import representations as mr
@@ -17,7 +22,32 @@ from ..maze import representations as mr
 
 # %% Global variables
 
-# %% SR on finely binned data
+# %%
+
+# %% Geodesic fields over finely binned data (square bins)
+def get_geodesic_ratemaps(pos, n_place_cells = 512, 
+                          bin_size = 0.02, 
+                          weighting = 'gaussian',
+                          sigma = 0.08,
+                          return_P=False,):
+    pixel_maze, bin_mask = mr.get_pixel_maze(pos, pixel_size = bin_size)
+    nodes = [x for x in pixel_maze.nodes()]
+    A = nx.to_scipy_sparse_array(pixel_maze, nodelist=nodes, weight="weight", format="csr")
+    D = shortest_path(A, directed=pixel_maze.is_directed(), unweighted=False)  # D[i, j] is distanceplt.imshow(D)
+
+    def gaussian_weighting(x, sigma=sigma):
+        return np.exp(-(x**2)/(2*sigma**2))
+    if weighting == 'gaussian':
+        P = gaussian_weighting(D)
+    subset_idx = np.random.choice(np.arange(len(P)), n_place_cells)
+    P = P[:,subset_idx] #(n_pos, n_place_cells)
+    ratemaps = P.T.reshape(n_place_cells, bin_mask.shape[0],bin_mask.shape[1]) #(n_place_cells, n_xbins,_ybins)
+    if return_P:
+        return ratemaps, P
+    return ratemaps
+
+
+# %% random walk SR on finely binned data (square bins)
 
 def get_SR_from_bin_mask(bin_mask, discount_factor = 0.85, allow_diagonal = True):
     '''Returns the SR matrix under a random walk with a given discount factor,
@@ -218,3 +248,4 @@ def plot_SR_fields_undirected(maze_name, SR_df,n_plots = 'all'):
                                 title='')
                 
 
+# %% SR 

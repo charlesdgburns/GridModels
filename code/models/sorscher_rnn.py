@@ -228,12 +228,13 @@ def generate_navigation_rates_df(options, trajectory = None,
     np.random.seed() #completely random trajectories
     options.n_steps = options.n_steps if trajectory is None else len(trajectory)
     for i in tqdm(range(options.n_steps)):
-        rat.update()
+        
         if trajectory is not None:
             # if we have a real trajectory, we use it to set the rat's position
             rat.history['pos'][-1] = trajectory['centroid_position'].values[i]
             rat.history['vel'][-1] = trajectory['velocity'].values[i]
             rat.history['head_direction'][-1] = [trajectory['head_direction'].x.values[i], trajectory['head_direction'].y.values[i]]
+        else
         place_cells.update()
         
     # now save in a format easy to read and store, consistent with our real data.

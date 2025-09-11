@@ -190,67 +190,69 @@ def get_skeleton_maze(maze_name):
     return skeleton_maze(edges)
 
 
-def get_pixel_maze(pos, pixel_size = 0.02, allow_diagonal=True):
-    '''Returns networkx graph object using a mask of bins representing locations which are valid in the world.
-    Assumes valid transitions to neighbouring bins and to itself.
-    Here neighbouring either allows diagonal or not.
-    Args:
-    -----
-    pos: np.array() #(n_positions, 2)
-        numpy array of x,y coordinates for real behavioural trajectory.
-    pixel_size: float()
-        bin_size for the pixel maze in metres. Default at 2cm.
-    allow_diagonal: boolean (True/false)
-        option to allow diagonal connections between visited bins. Default true.
-    Returns:
-    --------
-    pixel_maze: networkx object
-        network x object with edges between neighbouring visited bins and bins themselves.'''
-    
-    # 1. Start by binning data into 'pixels'
-    n_bins = []
-    for coord_index in [0,1]: #x and y coordinates
-        n_bins.append(int(int(pos[:,coord_index].max()-pos[:,coord_index].min())/pixel_size))
-    hist_2d, binx, biny = np.histogram2d(pos[:,0],pos[:,1],bins=n_bins)
-    bin_mask = hist_2d>0
+def get_pixel_maze(pos, pixel_size=0.02, allow_diagonal=True, return_bin_mask=True, return_meta=False):
+    '''Build an NX graph with binned positions of the maze as nodes.
+    Each node has a 'position' attribute in metres
+    Edges are weighted by euclidean distance between pixels.'''
+    pos = np.asarray(pos, dtype=np.float64); s = float(pixel_size)
 
-    # 2. build a nteworkx 2d graph (lattice connected to adjacent nodes)
-    pixel_maze = nx.grid_2d_graph(bin_mask.shape[0], bin_mask.shape[1])
-    # we then iterate over nodes and add/remove edges
-    nodes_to_remove = []
-    edges_to_add = []
-    for node in pixel_maze.nodes():
-        if bin_mask[node] != 1: #unvisited nodes get deleted (along with their edges).
-            nodes_to_remove.append(node)
-        else: #visited bins get edges added
-            # Add self-loop to every valid node
-            edges_to_add.append((node, node))
-            if allow_diagonal:
-                # Loop over diagonal neighbours and assign edge if valid position
-                for neighbour_transform in [(1,1), (-1,1), (1,-1), (-1,-1)]:
-                    diagonal_neighbour = tuple(map(sum, zip(node, neighbour_transform)))
-                    # Proper boundary checking for both dimensions
-                    if (0 <= diagonal_neighbour[0] < bin_mask.shape[0] and 
-                        0 <= diagonal_neighbour[1] < bin_mask.shape[1]):
-                        if bin_mask[diagonal_neighbour] == 1:
-                            edges_to_add.append((node, diagonal_neighbour))
-    pixel_maze.remove_nodes_from(nodes_to_remove)
-    pixel_maze.add_edges_from(edges_to_add)
-    
-    # 3. Add node position data
-    binx_centers = binx[:-1] + np.diff(binx)/2
-    biny_centers = biny[:-1] + np.diff(biny)/2
-    node2xpos, node2ypos = np.meshgrid(binx_centers, biny_centers, indexing = 'ij')
-    node2position_dict = {} #initialise the dictionary
-    for each_node in pixel_maze.nodes:
-        node2position_dict[each_node] = (node2xpos[each_node], node2ypos[each_node])
-        # Check if node has no neighbors (isolated node)
-        if pixel_maze.degree(each_node) == 0:
-            node2position_dict[each_node] = (0, 0) #set position to (0,0) preventing NaN issues later.
-            
-    nx.set_node_attributes(pixel_maze, values=node2position_dict, name='position')
+    def snap(lo, hi, s):
+        x0 = np.floor(lo / s) * s
+        x1 = np.ceil (hi / s) * s
+        return x0, x1
 
-    return pixel_maze
+    x0, x1 = snap(pos[:, 0].min(), pos[:, 0].max(), s)
+    y0, y1 = snap(pos[:, 1].min(), pos[:, 1].max(), s)
+
+    Hx = int(round((x1 - x0) / s))
+    Hy = int(round((y1 - y0) / s))
+
+    hist, x_edges, y_edges = np.histogram2d(
+        pos[:, 0], pos[:, 1],
+        bins=(Hx, Hy),
+        range=[[x0, x1], [y0, y1]]
+    )
+    bin_mask = hist > 0
+
+    G = nx.Graph()
+    for i in range(Hx):
+        for j in range(Hy):
+            if bin_mask[i, j]:
+                G.add_node((i, j))
+
+    for i, j in list(G.nodes()):
+        for di, dj, w in [(1,0,s),(-1,0,s),(0,1,s),(0,-1,s)]:
+            ii, jj = i+di, j+dj
+            if 0 <= ii < Hx and 0 <= jj < Hy and bin_mask[ii, jj]:
+                G.add_edge((i,j), (ii,jj), weight=w)
+
+    if allow_diagonal:
+        wdiag = np.sqrt(2)*s
+        for i, j in list(G.nodes()):
+            for di, dj in [(1,1),(1,-1),(-1,1),(-1,-1)]:
+                ii, jj = i+di, j+dj
+                if 0 <= ii < Hx and 0 <= jj < Hy and bin_mask[ii, jj]:
+                    G.add_edge((i,j), (ii,jj), weight=wdiag)
+    
+    assert nx.is_connected(G), "Pixel maze is disconnected - please choose larger bin_size or remove outlier positions."
+
+    x_centers = x0 + (np.arange(Hx) + 0.5) * s
+    y_centers = y0 + (np.arange(Hy) + 0.5) * s
+    for (i, j) in G.nodes():
+        G.nodes[(i, j)]["position"] = (x_centers[i], y_centers[j])
+
+    meta = {
+        "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+        "pixel_size": s, "shape": (Hx, Hy),
+        "x_edges": x_edges, "y_edges": y_edges,
+    }
+    if return_bin_mask and return_meta:
+        return G, bin_mask, meta
+    if return_bin_mask:
+        return G, bin_mask
+    if return_meta:
+        return G, meta
+    return G
 
 
 def get_maze_label2coord(simple_maze):
