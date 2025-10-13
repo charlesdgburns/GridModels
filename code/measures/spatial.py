@@ -299,3 +299,20 @@ def circle_mask(autocorr, relative_radius=1, in_val=1.0, out_val=0.0):
     z = np.less_equal(z, radius)
     vfunc = np.vectorize(lambda b: b and in_val or out_val)
     return vfunc(z)
+
+
+def get_aligned_ratemaps(open_field_ratemap, maze_ratemap):
+    '''
+    Aligns the spatial sampling of both ratemaps. 
+    Assumes that open field is smaller than maze, both have the same bin size and that they are centre aligned.
+    '''
+    if open_field_ratemap.shape[0]%2 == 1:
+        open_field_ratemap = open_field_ratemap[1:,1:]
+    x_diff, y_diff = np.array(maze_ratemap.shape) - np.array(open_field_ratemap.shape)
+    x_min, y_min = x_diff//2, y_diff//2
+    x_max, y_max = maze_ratemap.shape[0] - (x_diff - x_min), maze_ratemap.shape[1] - (y_diff - y_min)
+    cropped_maze_ratemap = maze_ratemap[x_min:x_max, y_min:y_max]
+    masked_of_ratemap = open_field_ratemap.copy()
+    masked_of_ratemap[np.isnan(cropped_maze_ratemap)] = np.nan
+    cropped_maze_ratemap[np.isnan(open_field_ratemap)] = np.nan
+    return masked_of_ratemap, cropped_maze_ratemap

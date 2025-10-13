@@ -178,7 +178,8 @@ def get_model_and_data(options):
 def get_trajectory(riab_or_real:str  = 'riab',    
                       environment:str = 'open_field', #or 'maze_1' or 'maze_2'
                       train_or_test:str = 'train',
-                      save_dir:str = TRAJECTORIES_DIR
+                      save_dir:str = TRAJECTORIES_DIR, 
+                      return_as_multicolumn = False
                    ):
     '''Helper function to load a saved trajectory (or generate one if not saved).
     This only updates the steps (centroid_position, velocity, and head_direction)
@@ -196,20 +197,13 @@ def get_trajectory(riab_or_real:str  = 'riab',
         rat = riab.Agent(box, params={"dt":options.framerate})
         for i in tqdm(range(150000)): #150000 steps is roughly 30 minutes at 60fps, matched with real data.
             rat.update()
-        nav_rates_dict = {}
-        nav_rates_dict['time'] = rat.history['t']
-        nav_rates_dict['centroid_position.x'] = [p[0] for p in rat.history['pos']]
-        nav_rates_dict['centroid_position.y'] = [p[1] for p in rat.history['pos']]
-        nav_rates_dict['velocity.x'] = [v[0] for v in rat.history['vel']]
-        nav_rates_dict['velocity.y'] = [v[1] for v in rat.history['vel']]
-        nav_rates_dict['head_direction.value'] = np.rad2deg([np.arctan2(v[1],v[0]) for v in rat.history['head_direction']])
-        nav_rates_dict['head_direction.x'] = [v[0] for v in rat.history['head_direction']]
-        nav_rates_dict['head_direction.y'] = [v[1] for v in rat.history['head_direction']]
-        df = pd.DataFrame(nav_rates_dict)
+        df = riab_to_nav_df(rat)
         #SAVE OUT
         df.to_csv(filepath, sep='\t',index = False)
-        df.columns =  pd.MultiIndex.from_tuples(
+        if return_as_multicolumn:
+            df.columns =  pd.MultiIndex.from_tuples(
         [col.split('.') if '.' in col else (col,'') for col in df.columns])
+        
     else:
         print(f"oopsie, there's no such trajectory! is something wrong with the filepath? \n {filepath}")
     return df
@@ -227,17 +221,33 @@ def generate_navigation_rates_df(options, trajectory = None,
                                             "widths":options.place_cell_rf})
     np.random.seed() #completely random trajectories
     options.n_steps = options.n_steps if trajectory is None else len(trajectory)
-    for i in tqdm(range(options.n_steps)):
-        
-        if trajectory is not None:
-            # if we have a real trajectory, we use it to set the rat's position
-            rat.history['pos'][-1] = trajectory['centroid_position'].values[i]
-            rat.history['vel'][-1] = trajectory['velocity'].values[i]
-            rat.history['head_direction'][-1] = [trajectory['head_direction'].x.values[i], trajectory['head_direction'].y.values[i]]
-        else
-        place_cells.update()
-        
+    if trajectory is None:
+        for i in tqdm(range(options.n_steps)):
+            rat.update()
+        nav_df = riab_to_nav_df(rat)
+    elif trajectory is not None:
+        nav_df = trajectory # assuming trajectory input is already n nav_df format
+    
+    #Now generate place cell activations
+    rates_dict = {}
+    print('Generating place cell activations:')
+    place_rates = place_cells.get_state(evaluate_at = None, pos = nav_df.centroid_position.values)
+    print('Done!')
     # now save in a format easy to read and store, consistent with our real data.
+    for place_cell in tqdm(range(options.Np)):
+        rates_dict[f'firingrate.place_cell_{place_cell}'] = place_rates[place_cell]
+    navigation_rates_df = pd.concat([nav_df,pd.DataFrame(rates_dict)],axis=1)
+    #make it multicolumn index !
+    navigation_rates_df.columns = pd.MultiIndex.from_tuples([
+        tuple(col.split('.')) if '.' in col else (col, '') 
+        for col in navigation_rates_df.columns])
+    print(navigation_rates_df.columns)
+    return navigation_rates_df 
+
+# conversion functions from RIAB outputs to nav_rates
+def riab_to_nav_df(rat):
+    '''If a trajectory was generated with RIAB, we turn rat history into a nav_df format.
+    Here columns are NOT multi-index (yet)'''
     nav_rates_dict = {}
     nav_rates_dict['time'] = rat.history['t']
     nav_rates_dict['centroid_position.x'] = [p[0] for p in rat.history['pos']]
@@ -247,15 +257,9 @@ def generate_navigation_rates_df(options, trajectory = None,
     nav_rates_dict['head_direction.value'] = np.rad2deg([np.arctan2(v[1],v[0]) for v in rat.history['head_direction']])
     nav_rates_dict['head_direction.x'] = [v[0] for v in rat.history['head_direction']]
     nav_rates_dict['head_direction.y'] = [v[1] for v in rat.history['head_direction']]
-    for place_cell in range(options.Np):
-        nav_rates_dict[f'firingrate.place_cell_{place_cell}'] = [x[place_cell] for x in place_cells.history['firingrate']]
-    navigation_rates_df = pd.DataFrame(nav_rates_dict)
-    #make it multicolumn index !
-    navigation_rates_df.columns = pd.MultiIndex.from_tuples([
-        tuple(col.split('.')) if '.' in col else (col, '') 
-        for col in navigation_rates_df.columns])
+    return pd.DataFrame(nav_rates_dict)
 
-    return navigation_rates_df 
+    
 
 # model training, saving, and loading #
 def train_model(options, save = True):

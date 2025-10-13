@@ -30,7 +30,8 @@ def get_place_code(positions,
     
     '''
     #set seed for reproducibility
-    np.random.seed(random_seed)
+    if random_seed != 0:
+        np.random.seed(random_seed)
     
     pixel_maze, bin_mask = mr.get_pixel_maze(positions, 
                                              pixel_size = bin_size,

@@ -26,6 +26,8 @@ print(f'Using device: {DEVICE}')
 TRAJECTORIES_DIR = Path('./GridModels/data/trajectories') #this is where generated and real trajectories are saved to and loaded from
 MODELS_DIR = Path('./GridModels/data/pettersen_models')
 
+LUT_BIN_SIZE = 0.03 #bin size in metres for the look-up-table generation.
+
 class Options: #just making this a simple class
     pass
 
@@ -42,8 +44,8 @@ options.framerate = 1/60      # data rate for both position and place cell firin
 
 #model options:
 options.distance_metric = 'euclidean' # 'euclidean' or 'geodesic'
-options.alpha = 0.5 #the balance between distance loss and capacity loss
-options.sigma = 1.2 #adjust the separation of points in distance loss
+options.alpha = 0.99 #the balance between distance loss and capacity loss
+options.sigma = 1.7 #adjust the separation of points in distance loss
 options.first_hidden_size = 64
 options.second_hidden_size = 128
 options.n_grid_cells = 256
@@ -145,7 +147,7 @@ class DistanceLUT(nn.Module):
     
     NOTE: returns distances in m/10, as for numerical reasons we want far distances to be above 1.
     """
-    def __init__(self, pos, bin_size=0.03, 
+    def __init__(self, pos, bin_size=LUT_BIN_SIZE, 
                  distance_metric = 'euclidean',
                  device=DEVICE):
         '''Requires pos (n_postitions,2) torch tensor input.
@@ -291,7 +293,7 @@ def get_gridcell_metrics_df(model):
     ratemaps, binx, biny = spatial.get_2D_ratemaps(hidden_activations.cpu().numpy(),
                                                     pos.cpu().numpy())
     ratemaps, binx, biny = pad_ratemaps_and_bins_np(ratemaps, binx, biny) #see utility function at bottom of script
-
+    
     gridcell_metrics = grid_scorer.get_grid_scores(ratemaps,binx,biny, return_metrics=True)
     gridcell_metrics_df = pd.DataFrame(gridcell_metrics)
     return gridcell_metrics_df
